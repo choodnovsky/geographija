@@ -21,7 +21,7 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import folium
-import matplotlib.pyplot as plt
+from IPython.display import display
 
 # ================================================================
 # 1. ПАРАМЕТРЫ — меняй под свою задачу
@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 INPUT_CSV     = 'deliveries_input.csv'   # входной файл с адресами
 DEPOT_COORDS  = (55.759660, 37.531388)   # координаты склада
 DEPOT_ADDRESS = 'Склад Ермакова Роща'
-N_COURIERS    = 6                      # количество курьеров
+N_COURIERS    = 7                      # количество курьеров
 WORK_START    = 8  * 3600                 # 08:00
 WORK_END      = 19 * 3600                # 19:00
 MAX_SHIFT     = WORK_END - WORK_START     # 39 600 сек = 11 ч
@@ -192,6 +192,9 @@ for i in range(N):
 print(f"\nМатрица готова ✅")
 print(f"Макс. расстояние : {dist_matrix.max()/1000:.1f} км")
 print(f"Макс. время пути : {time_matrix.max()/60:.0f} мин")
+display(pd.DataFrame(dist_matrix))
+display(pd.DataFrame(time_matrix))
+
 
 # ================================================================
 # 6. КЛАСТЕРИЗАЦИЯ — жёсткое деление на непересекающиеся зоны
