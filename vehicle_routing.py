@@ -38,6 +38,8 @@ AVG_SPEED_MS  = 17 * 1000 / 3600         # 17 км/ч → м/с (с учётом
 STOP_TIME     = 15 * 60                   # 15 мин на одну доставку
 GRAPHML_PATH  = 'graph/moscow.graphml'          # путь к графу Москвы
 MAP_PATH = 'result/moscow_delivery.html'
+REPORT_PATH = 'result/report.txt'
+
 
 # ================================================================
 # 2. ЧТЕНИЕ CSV И ГЕОКОДИНГ
@@ -131,9 +133,7 @@ print("\nПривязываем точки к узлам графа...")
 
 depot_node = ox.distance.nearest_nodes(G, DEPOT_COORDS[1], DEPOT_COORDS[0])
 
-df['node'] = ox.distance.nearest_nodes(
-    G, df['lon'].tolist(), df['lat'].tolist()
-)
+df['node'] = ox.distance.nearest_nodes(G, df['lon'].tolist(), df['lat'].tolist())
 
 # Убираем точки совпавшие со складом или друг с другом
 df = df[df['node'] != depot_node]
@@ -466,9 +466,8 @@ import os
 os.makedirs('result', exist_ok=True)
 
 from datetime import datetime
-report_path = 'result/report.txt'
 
-with open(report_path, 'w', encoding='utf-8') as f:
+with open(REPORT_PATH, 'w', encoding='utf-8') as f:
     today = datetime.now().strftime('%d.%m.%Y %H:%M')
     f.write(f"ОТЧЁТ ПО ДОСТАВКЕ — {today}\n")
     f.write("=" * 60 + "\n\n")
@@ -497,7 +496,7 @@ with open(report_path, 'w', encoding='utf-8') as f:
             f.write(f"  {order:>2}. {arrive}  {addr}\n")
         f.write(f"  Возврат на склад\n")
 
-print(f"Отчёт → {report_path} ✅")
+print(f"Отчёт → {REPORT_PATH} ✅")
 
 # ================================================================
 # 10. КАРТА МАРШРУТОВ
