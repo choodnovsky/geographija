@@ -161,9 +161,7 @@ time_matrix = np.zeros((N, N), dtype=np.int32)
 
 for i in range(N):
     try:
-        lengths = dict(nx.single_source_dijkstra_path_length(
-            G, all_nodes[i], weight='length'
-        ))
+        lengths = dict(nx.single_source_dijkstra_path_length(G, all_nodes[i], weight='length'))
     except Exception:
         lengths = {}
 
@@ -459,6 +457,47 @@ for vid in sorted(courier_routes.keys()):
     for order, (addr, arrive) in enumerate(courier_addrs[vid], 1):
         print(f"  {order:>2}. {arrive}  {addr}")
     print(f"  Возврат на склад")
+
+# ================================================================
+# 9. СОХРАНЕНИЕ ОТЧЁТА В TXT
+# ================================================================
+
+import os
+os.makedirs('result', exist_ok=True)
+
+from datetime import datetime
+report_path = 'result/report.txt'
+
+with open(report_path, 'w', encoding='utf-8') as f:
+    today = datetime.now().strftime('%d.%m.%Y %H:%M')
+    f.write(f"ОТЧЁТ ПО ДОСТАВКЕ — {today}\n")
+    f.write("=" * 60 + "\n\n")
+
+    # Сводная таблица
+    f.write("ИТОГИ\n")
+    f.write("=" * 60 + "\n")
+    f.write(stats_df.to_string())
+    f.write("\n" + "=" * 60 + "\n")
+    total_visited = stats_df['Доставок'].sum()
+    f.write(f"Итого доставок  : {total_visited} / {N_DELIVERIES}")
+    f.write("  Все посещены!\n" if total_visited == N_DELIVERIES else f"  Не хватает {N_DELIVERIES - total_visited}\n")
+    f.write(f"Общий пробег    : {stats_df['Пробег, км'].sum():.0f} км\n")
+    f.write(f"Средний пробег  : {stats_df['Пробег, км'].mean():.1f} км/курьер\n")
+    f.write(f"Укладываются    : {(stats_df['В смену'] == '✅').sum()} / {len(stats_df)} курьеров\n")
+
+    # Путевые листы
+    f.write("\n" + "=" * 60 + "\n")
+    f.write("ПУТЕВЫЕ ЛИСТЫ\n")
+    f.write("=" * 60 + "\n")
+    for vid in sorted(courier_routes.keys()):
+        stat = next(s for s in courier_stats if s['Курьер'] == vid + 1)
+        f.write(f"\nКурьер {vid+1}  |  {stat['Доставок']} точек  |  {stat['Пробег, км']} км  |  финиш {stat['Финиш']}\n")
+        f.write(f"  Старт: {DEPOT_ADDRESS} в 08:00\n")
+        for order, (addr, arrive) in enumerate(courier_addrs[vid], 1):
+            f.write(f"  {order:>2}. {arrive}  {addr}\n")
+        f.write(f"  Возврат на склад\n")
+
+print(f"Отчёт → {report_path} ✅")
 
 # ================================================================
 # 10. КАРТА МАРШРУТОВ
