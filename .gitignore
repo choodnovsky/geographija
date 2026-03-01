@@ -3,8 +3,13 @@
 cache
 cache_osmnx
 tracker.ipynb
-img
+home.png
+noentry.png
+parking.png
 logs
 graph
 .idea
 .DS_Store
+route_arkhangelsk.html
+route_elista.html
+route_spb.html
