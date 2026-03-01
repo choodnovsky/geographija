@@ -30,13 +30,14 @@ from IPython.display import display
 INPUT_CSV     = 'deliveries_input.csv'   # входной файл с адресами
 DEPOT_COORDS  = (55.759660, 37.531388)   # координаты склада
 DEPOT_ADDRESS = 'Склад Ермакова Роща'
-N_COURIERS    = 7                      # количество курьеров
+# N_COURIERS рассчитывается автоматически в блоке 6
 WORK_START    = 8  * 3600                 # 08:00
 WORK_END      = 19 * 3600                # 19:00
 MAX_SHIFT     = WORK_END - WORK_START     # 39 600 сек = 11 ч
 AVG_SPEED_MS  = 17 * 1000 / 3600         # 17 км/ч → м/с (с учётом пробок)
 STOP_TIME     = 15 * 60                   # 15 мин на одну доставку
 GRAPHML_PATH  = 'graph/moscow.graphml'          # путь к графу Москвы
+MAP_PATH = 'result/moscow_delivery.html'
 
 # ================================================================
 # 2. ЧТЕНИЕ CSV И ГЕОКОДИНГ
@@ -47,7 +48,7 @@ print("  ЧТЕНИЕ АДРЕСОВ")
 print("=" * 60)
 
 try:
-    df = pd.read_csv(INPUT_CSV, encoding='utf-8')
+    df = pd.read_csv(INPUT_CSV, encoding='utf-8').loc[:]
 except FileNotFoundError:
     print(f"❌ Файл {INPUT_CSV} не найден.")
     print("   Создайте CSV с колонкой 'address':")
@@ -197,43 +198,109 @@ display(pd.DataFrame(time_matrix))
 
 
 # ================================================================
-# 6. КЛАСТЕРИЗАЦИЯ — жёсткое деление на непересекающиеся зоны
+# 6. АВТОРАСЧЁТ ЧИСЛА КУРЬЕРОВ + КЛАСТЕРИЗАЦИЯ ПО ЗОНАМ
+# ================================================================
+
+print("\n" + "=" * 60)
+print("  АВТОРАСЧЁТ ЧИСЛА КУРЬЕРОВ")
+print("=" * 60)
+
+from sklearn.cluster import KMeans
+
+# Реальная оценка нагрузки:
+# Запускаем жадный TSP на всех точках как будто один курьер —
+# получаем суммарное время езды по всем точкам в хорошем порядке
+unvisited  = list(range(1, N))
+tsp_order  = [0]
+cur        = 0
+while unvisited:
+    nearest = min(unvisited, key=lambda j: time_matrix[cur][j])
+    tsp_order.append(nearest)
+    unvisited.remove(nearest)
+    cur = nearest
+tsp_order.append(0)
+
+# Суммируем время перегонов + стоянки
+total_drive = sum(time_matrix[tsp_order[k]][tsp_order[k+1]] - (STOP_TIME if tsp_order[k+1] != 0 else 0)
+                  for k in range(len(tsp_order) - 1))
+total_drive = max(total_drive, 0)
+total_stops = N_DELIVERIES * STOP_TIME
+total_work  = total_drive + total_stops
+
+# Делим суммарную нагрузку на смену с запасом 15% на возврат в депо
+N_COURIERS = max(1, int(np.ceil(total_work / (MAX_SHIFT * 0.85))))
+N_COURIERS = min(N_COURIERS, N_DELIVERIES)
+
+total_h = total_work / 3600
+print(f"Суммарная нагрузка (езда+стоянки) : {total_h:.1f} ч")
+print(f"Смена с запасом 15%%               : {MAX_SHIFT * 0.85 / 3600:.1f} ч")
+print(f"Курьеров потребуется               : {N_COURIERS}")
+print(f"Загрузка на курьера                : ~{total_h/N_COURIERS:.1f} ч / {MAX_SHIFT/3600:.0f} ч смены")
+
+# ================================================================
+# КЛАСТЕРИЗАЦИЯ — жёсткое деление на непересекающиеся зоны
 # ================================================================
 
 print("\n" + "=" * 60)
 print("  КЛАСТЕРИЗАЦИЯ ТОЧЕК")
 print("=" * 60)
 
-from sklearn.cluster import KMeans
-
-# Защита: курьеров не может быть больше чем точек
-N_COURIERS = min(N_COURIERS, N_DELIVERIES)
-
-# Кластеризуем только по координатам — зоны будут географически чистыми
 coords_km = df[['lat', 'lon']].values
 kmeans    = KMeans(n_clusters=N_COURIERS, random_state=42, n_init=20, max_iter=1000)
 df['cluster'] = kmeans.fit_predict(coords_km)
 
-# Выравниваем размеры кластеров: max - min <= 1
-target = len(df) // N_COURIERS
-for _ in range(500):
-    counts = df.groupby('cluster').size()
-    big    = counts[counts > target + 1].index.tolist()
-    small  = counts[counts < target].index.tolist()
-    if not big or not small:
-        break
-    for b in big:
-        for s in small:
-            big_pts  = df[df['cluster'] == b]
-            s_center = df[df['cluster'] == s][['lat','lon']].mean()
-            dists    = (big_pts['lat'] - s_center['lat'])**2 + (big_pts['lon'] - s_center['lon'])**2
-            df.at[dists.idxmin(), 'cluster'] = s
-            if df.groupby('cluster').size()[b] <= target + 1:
-                break
+# Выравниваем по нагрузке (суммарное время зоны), а не по числу точек
+def zone_load(cid):
+    idx = [int(i) + 1 for i in df[df['cluster'] == cid].index]
+    if not idx:
+        return 0
+    # Жадный TSP внутри зоны для оценки реального времени езды
+    unvis = idx.copy()
+    cur2  = 0
+    load  = 0
+    while unvis:
+        n = min(unvis, key=lambda j: time_matrix[cur2][j])
+        load += time_matrix[cur2][n]
+        unvis.remove(n)
+        cur2 = n
+    load += time_matrix[cur2][0]   # возврат на склад
+    return load  # уже включает STOP_TIME из time_matrix
 
-counts = df.groupby('cluster').size().sort_values()
-print(f"Точек по зонам: min={counts.min()}, max={counts.max()}, среднее={counts.mean():.1f}")
-print(f"Распределение: {sorted(counts.tolist())}")
+# Балансируем строго по MAX_SHIFT:
+# перекидываем точки из зон > MAX_SHIFT в зоны с запасом
+for _ in range(2000):
+    loads = {c: zone_load(c) for c in range(N_COURIERS)}
+    over  = [c for c, l in loads.items() if l > MAX_SHIFT]
+    under = [c for c, l in loads.items() if l < MAX_SHIFT * 0.92]
+    if not over:
+        break
+    for b in over:
+        if not under:
+            break
+        s = min(under, key=lambda c: loads[c])
+        big_pts  = df[df['cluster'] == b]
+        s_center = df[df['cluster'] == s][['lat', 'lon']].mean()
+        dists    = (big_pts['lat'] - s_center['lat'])**2 + (big_pts['lon'] - s_center['lon'])**2
+        df.at[dists.idxmin(), 'cluster'] = s
+        loads[b] = zone_load(b)
+        loads[s] = zone_load(s)
+        if loads[s] >= MAX_SHIFT * 0.92:
+            under.remove(s)
+
+print(f"{'Зона':<6} {'Точек':>6}  {'~Нагрузка, ч':>13}  Статус")
+all_ok = True
+for c in range(N_COURIERS):
+    n   = len(df[df['cluster'] == c])
+    wl  = zone_load(c) / 3600
+    bar = chr(9608) * max(1, int(wl / (MAX_SHIFT / 3600) * 15))
+    ok  = 'OK' if wl <= MAX_SHIFT / 3600 else '! ПРЕВЫШЕНИЕ'
+    if wl > MAX_SHIFT / 3600:
+        all_ok = False
+    print(f"  {c+1:<4} {n:>6}     {wl:>5.1f} h  {bar}  {ok}")
+if all_ok:
+    print("\nВсе зоны укладываются в смену!")
+else:
+    print("\nОстались превышения - добавь курьера через N_COURIERS вручную")
 
 df = df.reset_index(drop=True)
 
@@ -464,5 +531,12 @@ for vid in sorted(courier_routes.keys()):
 legend_html += "</div>"
 m.get_root().html.add_child(folium.Element(legend_html))
 
-m.save('result/moscow_delivery.html')
-print("Карта  → result/moscow_delivery.html ✅")
+m.save(MAP_PATH)
+# Leaflet добавляет SVG-флаг через JS — скрываем его через CSS
+with open(MAP_PATH, 'r', encoding='utf-8') as f:
+    html = f.read()
+html = html.replace('</head>', '<style>.leaflet-attribution-flag{display:none!important}</style>\n</head>', 1)
+with open(MAP_PATH, 'w', encoding='utf-8') as f:
+    f.write(html)
+
+print(f"Карта  → {MAP_PATH} ✅")
